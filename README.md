@@ -13,6 +13,9 @@ Note that iz-cpm is a very basic implementation, mostly for educational purposes
 ## Installation
 Extract the [latest zip](https://github.com/ivanizag/iz-cpm/releases) for Linux, MacOS or Windows. Optionally run `download.sh` or `download.bat`  to download the CP/M 2.2 system disk, Microsoft Basic, Turbo Pascal, Lisp and some games.
 
+## Build from source
+To build from source, install the latest Rust compiler, clone the repo and run `cargo rust --release`. To cross compile to Windows, install the target with `rustup` and run `cargo build --release --target x86_64-pc-windows-gnu`.
+
 ## Usage examples
 
 Execute `iz-cpm` to open the CP/M command prompt (the CCP) on the current directory:
@@ -142,7 +145,7 @@ To emulate this environment using the host filesystem, we have to provide a repl
 - Z80 emulator. It uses [iz80](https://github.com/ivanizag/iz80)
 - [BIOS](src/bios.rs) emulator. Only the I/O entrypoints. In theory, it shouldn't be necessary, but some programs use it directly, bypassing BDOS.
 - [BDOS](src/bdos.rs) emulator. Traps the calls and executes code on the  host.
-- CPP. No emulation needed. The CPP binary from CP/M 2.2 is used.
+- CPP. Runs natively, no emulation needed. We use ZCPR1 an open source alternative. See [cpmish](http://cowlark.com/cpmish/) for other open source alternatives to the CP/M binaries. The CPP binary from CP/M 2.2 can be used optionally.
 - [Terminal](src/terminal.rs) emulator. CP/M does not define how the terminal should work. Applications needed to be aware and usually could be configured for several leading options, like ADM-3a, VT-52, Hazeltine 1500 and Osborne. This emulator supports ADM-3a used also on the very popular Kaypro computers.
 
 ## Useful links:

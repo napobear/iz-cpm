@@ -29,13 +29,13 @@ use self::constants::*;
 use self::cpm_machine::CpmMachine;
 use self::fcb::*;
 
-// Welcome message 1970's style
+// Welcome message
 const WELCOME: &'static str =
 "iz-cpm https://github.com/ivanizag/iz-cpm
 CP/M 2.2 Emulation
 Press ctrl-c ctrl-c Y to return to host";
 
-static CCP_BINARY: &'static [u8] = include_bytes!("../cpm22/OS2CCP.BIN");
+static CCP_BINARY: &'static [u8] = include_bytes!("../third-party/bin/zcpr.bin");
 
 fn main() {
     // Parse arguments
@@ -68,7 +68,11 @@ fn main() {
             .long("cpu")
             .value_name("model")
             .default_value("z80")
-            .help("cpu model z80 or 8080"))
+            .help("Cpu model z80 or 8080"))
+        .arg(Arg::with_name("ccp")
+            .long("ccp")
+            .value_name("ccp")
+            .help("Alternative CPP bynary, it must be compiled with CCP_BASE=$f000"))
         .arg(Arg::with_name("disk_a").long("disk-a").value_name("path").short("a").default_value(".").help("directory to map disk A:"))
         .arg(Arg::with_name("disk_b").long("disk-b").value_name("path").short("b").help("directory to map disk B:"))
         .arg(Arg::with_name("disk_c").long("disk-c").value_name("path").short("c").help("directory to map disk C:"))
@@ -92,12 +96,13 @@ fn main() {
     let call_trace = matches.is_present("call_trace") || matches.is_present("call_trace_all");
     let call_trace_all = matches.is_present("call_trace_all");
     let slow = matches.is_present("slow");
-    let cpu_mode = matches.value_of("cpu");
+    let cpu_model = matches.value_of("cpu");
+    let ccp_filename = matches.value_of("ccp");
     let use_tpa = filename.is_none();
 
     // Init device
     let mut machine = CpmMachine::new();
-    let mut cpu = match cpu_mode {
+    let mut cpu = match cpu_model {
         Some("z80") => Cpu::new_z80(),
         Some("8080") => Cpu::new_8080(),
         _ => {
@@ -132,9 +137,33 @@ fn main() {
     match filename {
         None => {
             // Load TPA
-            binary = CCP_BINARY;
+            binary = match ccp_filename {
+                None => {
+                    binary_size = CCP_BINARY.len();
+                    CCP_BINARY
+                },
+                Some(name) =>{
+                    match File::open(name) {
+                        Err(err) => {
+                            eprintln!("Error opening ccp \"{}\": {}", name, err);
+                            return; //process::exit(1);
+                        },
+                        Ok(mut file) => {
+                            match file.read(&mut buf) {
+                                Err(err) => {
+                                    eprintln!("Error loading ccp \"{}\": {}", name, err);
+                                    return; //process::exit(1);
+                                },
+                                Ok(size) => {
+                                    binary_size = size;
+                                    &buf
+                                }
+                            }
+                        }
+                    }
+                }
+            };
             binary_address = CCP_BASE_ADDRESS;
-            binary_size = CCP_BINARY.len();
             println!("{}", WELCOME);
         },
         Some(name) => {
@@ -198,7 +227,7 @@ fn main() {
                     len = 0x7E; // Max 0x7E chars for parameters
                 }
                 machine.poke(SYSTEM_PARAMS_ADDRESS, (len + 1) as u8);
-                machine.poke(SYSTEM_PARAMS_ADDRESS, ' ' as u8);
+                machine.poke(SYSTEM_PARAMS_ADDRESS + 1, ' ' as u8);
                 let p_bytes = p.as_bytes();
                 for i in 0..len {
                     machine.poke(SYSTEM_PARAMS_ADDRESS + (i as u16) + 2, p_bytes[i]);
@@ -219,14 +248,23 @@ fn main() {
                 // cases, programs only require a single file name. Therefore,
                 // you can proceed to use FCBI straight away, not caring that
                 // FCB2 will be overwritten.
+                // Both are initialized with spaces.
+                Fcb::new(FCB1_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
+                Fcb::new(FCB2_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
                 let mut parts = p.split_ascii_whitespace();
                 if let Some(arg1) = parts.next() {
                     if let Some(file1) = name_to_8_3(arg1) {
+                        if call_trace {
+                            println!("[[FCB1 loaded with {}]]", file1);
+                        }
                         Fcb::new(FCB1_ADDRESS).set_name_direct(&mut machine, file1);
                     }
                 }
                 if let Some(arg2) = parts.next() {
                     if let Some(file2) = name_to_8_3(arg2) {
+                        if call_trace {
+                            println!("[[FCB2 loaded with {}]]", file2);
+                        }
                         Fcb::new(FCB2_ADDRESS).set_name_direct(&mut machine, file2);
                     }
                 }
