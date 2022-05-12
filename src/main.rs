@@ -16,7 +16,8 @@ mod bdos_environment;
 mod bdos_file;
 mod cpm_machine;
 mod fcb;
-mod translate;
+mod terminal;
+mod terminal_adm3a;
 
 #[cfg(windows)]
 mod console_windows;
@@ -28,14 +29,17 @@ use self::bios::Bios;
 use self::constants::*;
 use self::cpm_machine::CpmMachine;
 use self::fcb::*;
+use self::terminal::TerminalEmulator;
+use self::terminal::Transparent;
+use self::terminal_adm3a::Adm3aToAnsi;
 
 // Welcome message
-const WELCOME: &'static str =
+const WELCOME: &str =
 "iz-cpm https://github.com/ivanizag/iz-cpm
 CP/M 2.2 Emulation
 Press ctrl-c ctrl-c Y to return to host";
 
-static CCP_BINARY: &'static [u8] = include_bytes!("../third-party/bin/zcpr.bin");
+static CCP_BINARY: &[u8] = include_bytes!("../third-party/bin/zcpr.bin");
 
 fn main() {
     // Parse arguments
@@ -69,6 +73,10 @@ fn main() {
             .value_name("model")
             .default_value("z80")
             .help("Cpu model z80 or 8080"))
+        .arg(Arg::with_name("terminal")
+            .long("terminal")
+            .default_value("adm3a")
+            .help("Terminal emulation ADM-3A or ANSI"))
         .arg(Arg::with_name("ccp")
             .long("ccp")
             .value_name("ccp")
@@ -97,6 +105,7 @@ fn main() {
     let call_trace_all = matches.is_present("call_trace_all");
     let slow = matches.is_present("slow");
     let cpu_model = matches.value_of("cpu");
+    let terminal = matches.value_of("terminal");
     let ccp_filename = matches.value_of("ccp");
     let use_tpa = filename.is_none();
 
@@ -110,16 +119,24 @@ fn main() {
             return;
         }
     };
+    let term_emu: Box<dyn TerminalEmulator> = match terminal {
+        Some("adm3a") => Box::new(Adm3aToAnsi::new()),
+        Some("ansi") => Box::new(Transparent::new()),
+        _ => {
+            eprintln!("Unkown terminal emulattion. Choose \"adm3a\" or \"ansi\".");
+            return;
+        }
+    };
 
     // Init cpm
-    let mut bios = Bios::new();
+    let mut bios = Bios::new(term_emu);
     bios.setup(&mut machine);
     let mut bdos = Bdos::new();
     bdos.reset(&mut machine);
 
     // Assign drives
     for i in 0..15 {
-        let res = matches.value_of(format!("disk_{}", (i + 'a' as u8) as char));
+        let res = matches.value_of(format!("disk_{}", (i + b'a') as char));
         if let Some(path) = res {
             if let Err(err) = fs::read_dir(path) {
                 eprintln!("Error with directory \"{}\": {}", path, err);
@@ -208,7 +225,7 @@ fn main() {
             // Push 0x0000
             machine.poke(sp, (0x0000 >> 8) as u8);
             sp -= 1;
-            machine.poke(sp, 0x0000 as u8);
+            machine.poke(sp, 0x0000_u8);
             sp -= 1;
             cpu.registers().set16(Reg16::SP, sp);
         }
@@ -219,6 +236,8 @@ fn main() {
         // the number of characters, with the characters themselves following
         // the character count. The characters are translated to upper-case
         // ASCII with uninitialized memory following the last valid character. 
+        Fcb::new(FCB1_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
+        Fcb::new(FCB2_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
         match params {
             None => machine.poke(SYSTEM_PARAMS_ADDRESS, 0),
             Some(p) => {
@@ -227,7 +246,7 @@ fn main() {
                     len = 0x7E; // Max 0x7E chars for parameters
                 }
                 machine.poke(SYSTEM_PARAMS_ADDRESS, (len + 1) as u8);
-                machine.poke(SYSTEM_PARAMS_ADDRESS + 1, ' ' as u8);
+                machine.poke(SYSTEM_PARAMS_ADDRESS + 1, b' ');
                 let p_bytes = p.as_bytes();
                 for i in 0..len {
                     machine.poke(SYSTEM_PARAMS_ADDRESS + (i as u16) + 2, p_bytes[i]);
@@ -249,8 +268,6 @@ fn main() {
                 // you can proceed to use FCBI straight away, not caring that
                 // FCB2 will be overwritten.
                 // Both are initialized with spaces.
-                Fcb::new(FCB1_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
-                Fcb::new(FCB2_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
                 let mut parts = p.split_ascii_whitespace();
                 if let Some(arg1) = parts.next() {
                     if let Some(file1) = name_to_8_3(arg1) {
@@ -289,7 +306,6 @@ fn main() {
             er = bdos.execute(&mut bios, &mut machine, cpu.registers(),
                 call_trace || call_trace_all, call_trace && ! call_trace_all);
         }
-
     
         match er {
             ExecutionResult::Continue => (),

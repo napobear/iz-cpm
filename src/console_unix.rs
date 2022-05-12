@@ -4,25 +4,25 @@ use std::time::Duration;
 
 use termios::*;
 
-use super::translate::Adm3aToAnsi;
+use super::terminal::TerminalEmulator;
 
 const STDIN_FD: i32 = 0;
 
 pub struct Console {
     initial_termios: Option<Termios>,
     next_char: Option<u8>,
-    translator: Adm3aToAnsi
+    terminal: Box<dyn TerminalEmulator>
 }
 
 impl Console {
-    pub fn new() -> Console {
+    pub fn new(terminal: Box<dyn TerminalEmulator>) -> Console {
         // Prepare terminal
         let initial_termios = Termios::from_fd(STDIN_FD).ok();
 
         let c = Console {
-            initial_termios: initial_termios,
+            initial_termios,
             next_char: None,
-            translator: Adm3aToAnsi::new(),
+            terminal: terminal,
         };
 
         c.setup_host_terminal(false);
@@ -30,13 +30,12 @@ impl Console {
     }
 
     fn setup_host_terminal(&self, blocking: bool) {
-        if let Some(initial) = self.initial_termios {
-            let mut new_term = initial.clone();
-            new_term.c_iflag &= !(IXON | ICRNL);
-            new_term.c_lflag &= !(ISIG | ECHO | ICANON | IEXTEN);
-            new_term.c_cc[VMIN] = if blocking {1} else {0};
-            new_term.c_cc[VTIME] = 0;
-            tcsetattr(STDIN_FD, TCSANOW, &new_term).unwrap();
+        if let Some(mut initial) = self.initial_termios {
+            initial.c_iflag &= !(IXON | ICRNL);
+            initial.c_lflag &= !(ISIG | ECHO | ICANON | IEXTEN);
+            initial.c_cc[VMIN] = if blocking {1} else {0};
+            initial.c_cc[VTIME] = 0;
+            tcsetattr(STDIN_FD, TCSANOW, &initial).unwrap();
         }
     }
 
@@ -68,7 +67,7 @@ impl Console {
                 // Blocks waiting for char
                 self.setup_host_terminal(true);
                 let mut buf = [0];
-                stdin().read(&mut buf).unwrap();
+                stdin().read_exact(&mut buf).unwrap();
                 self.setup_host_terminal(false);
                 buf[0]
             }
@@ -76,7 +75,7 @@ impl Console {
     }
 
     pub fn put(&mut self, ch: u8) {
-        if let Some(sequence) = self.translator.translate(ch) {
+        if let Some(sequence) = self.terminal.translate(ch) {
             print!("{}", sequence);
             stdout().flush().unwrap();
         }

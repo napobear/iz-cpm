@@ -1,6 +1,6 @@
 [package]
 name = "iz-cpm"
-version = "1.1.0"
+version = "1.2.0"
 authors = ["Ivan Izaguirre <ivanizag@gmail.com>"]
 edition = "2018"
 
@@ -9,7 +9,7 @@ name = "iz-cpm"
 path = "src/main.rs"
 
 [dependencies]
-iz80 = "^0.3.2"
+iz80 = "^0.3.5"
 #iz80 = {path = "../iz80"}
 clap = "^2"
 
