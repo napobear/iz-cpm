@@ -7,31 +7,17 @@ use std::time::Duration;
 use clap::{Arg, App};
 use iz80::*;
 
-mod bdos;
-mod bios;
-mod constants;
-mod bdos_console;
-mod bdos_drive;
-mod bdos_environment;
-mod bdos_file;
-mod cpm_machine;
-mod fcb;
-mod terminal;
-mod terminal_adm3a;
 
-#[cfg(windows)]
-mod console_windows;
-#[cfg(unix)]
-mod console_unix;
-
-use self::bdos::Bdos;
-use self::bios::Bios;
-use self::constants::*;
-use self::cpm_machine::CpmMachine;
-use self::fcb::*;
-use self::terminal::TerminalEmulator;
-use self::terminal::Transparent;
-use self::terminal_adm3a::Adm3aToAnsi;
+use crate::bdos::Bdos;
+use crate::bdos::execute_bdos;
+use crate::console_emulator::ConsoleEmulator;
+use crate::bios::Bios;
+use crate::constants::*;
+use crate::cpm_machine::CpmMachine;
+use crate::fcb::*;
+use crate::terminal::TerminalEmulator;
+use crate::terminal::Transparent;
+use crate::terminal_adm3a::Adm3aToAnsi;
 
 // Welcome message
 const WELCOME: &str =
@@ -41,63 +27,72 @@ Press ctrl-c ctrl-c Y to return to host";
 
 static CCP_BINARY: &[u8] = include_bytes!("../third-party/bin/zcpr.bin");
 
-fn main() {
+pub fn run<'a>(command_line: Option<Vec<&str>>, console: &mut dyn ConsoleEmulator) {
     // Parse arguments
-    let matches = App::new(WELCOME)
-        .arg(Arg::with_name("CMD")
-            .help("The binary image to run, usually a .COM file")
-            .required(false)
-            .index(1))
-            .arg(Arg::with_name("ARGS")
-            .help("Parameters for the given command")
-            .required(false)
-            .index(2))
-        .arg(Arg::with_name("call_trace")
-            .short("t")
-            .long("call-trace")
-            .help("Traces BDOS calls excluding screen I/O"))
-        .arg(Arg::with_name("call_trace_all")
-            .short("T")
-            .long("call-trace-all")
-            .help("Traces BDOS and BIOS calls"))
-        .arg(Arg::with_name("cpu_trace")
-            .short("z")
-            .long("cpu-trace")
-            .help("Traces CPU instructions execution"))
-        .arg(Arg::with_name("slow")
-            .short("s")
-            .long("slow")
-            .help("Runs slower"))
-        .arg(Arg::with_name("cpu")
-            .long("cpu")
-            .value_name("model")
-            .default_value("z80")
-            .help("Cpu model z80 or 8080"))
-        .arg(Arg::with_name("terminal")
-            .long("terminal")
-            .default_value("adm3a")
-            .help("Terminal emulation ADM-3A or ANSI"))
-        .arg(Arg::with_name("ccp")
-            .long("ccp")
-            .value_name("ccp")
-            .help("Alternative CPP bynary, it must be compiled with CCP_BASE=$f000"))
-        .arg(Arg::with_name("disk_a").long("disk-a").value_name("path").short("a").default_value(".").help("directory to map disk A:"))
-        .arg(Arg::with_name("disk_b").long("disk-b").value_name("path").short("b").help("directory to map disk B:"))
-        .arg(Arg::with_name("disk_c").long("disk-c").value_name("path").short("c").help("directory to map disk C:"))
-        .arg(Arg::with_name("disk_d").long("disk-d").value_name("path").short("d").help("directory to map disk D:"))
-        .arg(Arg::with_name("disk_e").long("disk-e").value_name("path").help("directory to map disk E:"))
-        .arg(Arg::with_name("disk_f").long("disk-f").value_name("path").help("directory to map disk F:"))
-        .arg(Arg::with_name("disk_g").long("disk-g").value_name("path").help("directory to map disk G:"))
-        .arg(Arg::with_name("disk_h").long("disk-h").value_name("path").help("directory to map disk H:"))
-        .arg(Arg::with_name("disk_i").long("disk-i").value_name("path").help("directory to map disk I:"))
-        .arg(Arg::with_name("disk_j").long("disk-j").value_name("path").help("directory to map disk J:"))
-        .arg(Arg::with_name("disk_k").long("disk-k").value_name("path").help("directory to map disk K:"))
-        .arg(Arg::with_name("disk_l").long("disk-l").value_name("path").help("directory to map disk L:"))
-        .arg(Arg::with_name("disk_m").long("disk-m").value_name("path").help("directory to map disk M:"))
-        .arg(Arg::with_name("disk_n").long("disk-n").value_name("path").help("directory to map disk N:"))
-        .arg(Arg::with_name("disk_o").long("disk-o").value_name("path").help("directory to map disk O:"))
-        .arg(Arg::with_name("disk_p").long("disk-p").value_name("path").help("directory to map disk P:"))
-        .get_matches();
+    let app = App::new(WELCOME)
+    .arg(Arg::with_name("CMD")
+        .help("The binary image to run, usually a .COM file")
+        .required(false)
+        .index(1))
+        .arg(Arg::with_name("ARGS")
+        .help("Parameters for the given command")
+        .required(false)
+        .index(2))
+    .arg(Arg::with_name("call_trace")
+        .short("t")
+        .long("call-trace")
+        .help("Traces BDOS calls excluding screen I/O"))
+    .arg(Arg::with_name("call_trace_all")
+        .short("T")
+        .long("call-trace-all")
+        .help("Traces BDOS and BIOS calls"))
+    .arg(Arg::with_name("cpu_trace")
+        .short("z")
+        .long("cpu-trace")
+        .help("Traces CPU instructions execution"))
+    .arg(Arg::with_name("slow")
+        .short("s")
+        .long("slow")
+        .help("Runs slower"))
+    .arg(Arg::with_name("cpu")
+        .long("cpu")
+        .value_name("model")
+        .default_value("z80")
+        .help("Cpu model z80 or 8080"))
+    .arg(Arg::with_name("terminal")
+        .long("terminal")
+        .default_value("adm3a")
+        .help("Terminal emulation ADM-3A or ANSI"))
+    .arg(Arg::with_name("ccp")
+        .long("ccp")
+        .value_name("ccp")
+        .help("Alternative CPP binary, it must be compiled with CCP_BASE=$f000"))
+    .arg(Arg::with_name("disk_a").long("disk-a").value_name("path").short("a").default_value(".").help("directory to map disk A:"))
+    .arg(Arg::with_name("disk_b").long("disk-b").value_name("path").short("b").help("directory to map disk B:"))
+    .arg(Arg::with_name("disk_c").long("disk-c").value_name("path").short("c").help("directory to map disk C:"))
+    .arg(Arg::with_name("disk_d").long("disk-d").value_name("path").short("d").help("directory to map disk D:"))
+    .arg(Arg::with_name("disk_e").long("disk-e").value_name("path").help("directory to map disk E:"))
+    .arg(Arg::with_name("disk_f").long("disk-f").value_name("path").help("directory to map disk F:"))
+    .arg(Arg::with_name("disk_g").long("disk-g").value_name("path").help("directory to map disk G:"))
+    .arg(Arg::with_name("disk_h").long("disk-h").value_name("path").help("directory to map disk H:"))
+    .arg(Arg::with_name("disk_i").long("disk-i").value_name("path").help("directory to map disk I:"))
+    .arg(Arg::with_name("disk_j").long("disk-j").value_name("path").help("directory to map disk J:"))
+    .arg(Arg::with_name("disk_k").long("disk-k").value_name("path").help("directory to map disk K:"))
+    .arg(Arg::with_name("disk_l").long("disk-l").value_name("path").help("directory to map disk L:"))
+    .arg(Arg::with_name("disk_m").long("disk-m").value_name("path").help("directory to map disk M:"))
+    .arg(Arg::with_name("disk_n").long("disk-n").value_name("path").help("directory to map disk N:"))
+    .arg(Arg::with_name("disk_o").long("disk-o").value_name("path").help("directory to map disk O:"))
+    .arg(Arg::with_name("disk_p").long("disk-p").value_name("path").help("directory to map disk P:"));
+
+    let matches = match command_line {
+        None => app.get_matches(),
+        Some(args) => {
+            let mut args_complete = vec!("testbin");
+            args_complete.extend(args.iter());
+            app.get_matches_from(args_complete)
+        }
+    };
+        
     let filename = matches.value_of("CMD");
     let params = matches.value_of("ARGS");
     let cpu_trace = matches.is_present("cpu_trace");
@@ -119,23 +114,30 @@ fn main() {
             return;
         }
     };
+
+    // Init BIOS
     let term_emu: Box<dyn TerminalEmulator> = match terminal {
         Some("adm3a") => Box::new(Adm3aToAnsi::new()),
         Some("ansi") => Box::new(Transparent::new()),
         _ => {
-            eprintln!("Unkown terminal emulattion. Choose \"adm3a\" or \"ansi\".");
+            eprintln!("Unkown terminal emulation. Choose \"adm3a\" or \"ansi\".");
             return;
         }
     };
-
-    // Init cpm
-    let mut bios = Bios::new(term_emu);
+/*     let console = match console {
+        None => Console::new(),
+        Some(console) => *console
+    };
+*/
+    let mut bios = Bios::new(/*console, */term_emu);
     bios.setup(&mut machine);
+
+    // Init BDOS
     let mut bdos = Bdos::new();
     bdos.reset(&mut machine);
 
     // Assign drives
-    for i in 0..15 {
+    for i in 0..16 {
         let res = matches.value_of(format!("disk_{}", (i + b'a') as char));
         if let Some(path) = res {
             if let Err(err) = fs::read_dir(path) {
@@ -219,7 +221,7 @@ fn main() {
     if !use_tpa {
         // Upon entry to a transient program, the CCP leaves the stack pointer
         // set to an eight-level stack area with the CCP return address pushed
-        // onto the stack, leaving seven levels before overflow occurs. 
+        // onto the stack, leaving seven levels before overflow occurs.
         if binary_address == TPA_BASE_ADDRESS {
             let mut sp = TPA_STACK_ADDRESS;
             // Push 0x0000
@@ -235,7 +237,7 @@ fn main() {
         // the operator following the program name. The first position contains
         // the number of characters, with the characters themselves following
         // the character count. The characters are translated to upper-case
-        // ASCII with uninitialized memory following the last valid character. 
+        // ASCII with uninitialized memory following the last valid character.
         Fcb::new(FCB1_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
         Fcb::new(FCB2_ADDRESS).set_name_direct(&mut machine, "        .   ".to_string());
         match params {
@@ -301,12 +303,12 @@ fn main() {
             break;
         }
 
-        let mut er = bios.execute(cpu.registers(), call_trace_all);
+        let mut er = bios.execute(console, cpu.registers(), call_trace_all);
         if er == ExecutionResult::Continue {
-            er = bdos.execute(&mut bios, &mut machine, cpu.registers(),
-                call_trace || call_trace_all, call_trace && ! call_trace_all);
+            er = execute_bdos(&mut bdos, &mut bios, console, &mut machine,
+                cpu.registers(), call_trace || call_trace_all, call_trace && !call_trace_all);
         }
-    
+
         match er {
             ExecutionResult::Continue => (),
             ExecutionResult::Stop => {
@@ -315,7 +317,7 @@ fn main() {
             ExecutionResult::StopConfirm => {
                 eprintln!();
                 eprintln!("Press Y to exit iz-cpm. Any other key to continue.");
-                let ch = bios.read() as char;
+                let ch = bios.read(console) as char;
                 if ch == 'Y' || ch == 'y' {
                     break;
                 }
@@ -325,6 +327,7 @@ fn main() {
                     print!("[[Warm boot]]");
                 }
                 if use_tpa {
+                    bdos.warm_reset(&mut machine);
                     for i in 0..binary_size {
                         machine.poke(binary_address + i as u16, binary[i]);
                     }
@@ -345,14 +348,17 @@ fn main() {
                         machine.poke(binary_address + i as u16, binary[i]);
                     }
                     cpu.registers().set_pc(binary_address);
-                    cpu.registers().set8(Reg8::C, 0); // Reset user and drive
+                    let user_drive = machine.peek(CCP_USER_DRIVE_ADDRESS);
+                    cpu.registers().set8(Reg8::C, user_drive);
                     bdos.reset(&mut machine); // Reset Bdos
                 } else {
                     break;
                 }
             }
-            
+        }
 
+        if console.terminated() {
+            break;
         }
 
         if slow {

@@ -1,5 +1,6 @@
 use iz80::Machine;
-use super::bdos_environment::*;
+use crate::bdos_environment::*;
+use crate::constants::ExecutionResult;
 
 pub fn read(env: &mut BdosEnvironment) -> u8 {
     // The Console Input function reads the next console character to register
@@ -9,8 +10,8 @@ pub fn read(env: &mut BdosEnvironment) -> u8 {
     // CTRL-S, and start/stop printer echo, CTRL-P. The FDOS does not return to
     // the calling program until a character has been typed, thus suspending
     // execution if a character is not ready. 
-    let ch = env.bios.read();
-    env.bios.write(ch);
+    let ch = env.bios.read(env.console, );
+    env.bios.write(env.console, ch);
     ch
 }
 
@@ -18,7 +19,14 @@ pub fn write(env: &mut BdosEnvironment, ch: u8) {
     // The ASCII character from register E is sent to the console device. As in
     // Function 1, tabs are expanded and checks are made for start/stop scroll
     // and printer echo. 
-    env.bios.write(ch);
+    env.bios.write(env.console, ch);
+}
+
+pub fn read_reader(env: &mut BdosEnvironment) -> u8 {
+    // The Reader Input function reads the next character from the logical reader
+    // into register A. Control does not return until the character has been read.
+    let ch = env.bios.read(env.console, );
+    ch
 }
 
 pub fn write_string(env: &mut BdosEnvironment, address: u16) {
@@ -34,11 +42,11 @@ pub fn write_string(env: &mut BdosEnvironment, address: u16) {
         if ch as char == '$'{
             break;
         }
-        env.bios.write(ch);
+        env.bios.write(env.console, ch);
     }
 }
 
-pub fn read_string(env: &mut BdosEnvironment, address: u16) -> u8 {
+pub fn read_string(env: &mut BdosEnvironment, address: u16) -> ExecutionResult {
     // The Read Buffer function reads a line of edited console input into a
     // buffer addressed by registers DE. Console input is terminated when either
     // input buffer overflows or a carriage return or line-feed is typed. The
@@ -55,21 +63,27 @@ pub fn read_string(env: &mut BdosEnvironment, address: u16) -> u8 {
     let max_size = env.machine.peek(address);
     let mut size = 0;
     loop {
-        let ch = env.bios.read();
+        let ch = env.bios.read(env.console);
         if env.bios.stop() {
             break;
         }
         if ch == 10 || ch == 13 { // CR of LF
             break;
         }
+
+        // break on control-c at the start of the line
+        if ch == 3 && size == 0 {
+            return ExecutionResult::WarmBoot
+        }
+
         if ch == 127 { // DEL
             if size > 0 {
                 size -= 1;
-                env.bios.write(ch);
+                env.bios.write(env.console, ch);
             }
             continue;
         }
-        env.bios.write(ch);
+        env.bios.write(env.console, ch);
         env.machine.poke(address + 2 + size as u16, ch);
         size += 1;
         if size >= max_size {
@@ -79,14 +93,14 @@ pub fn read_string(env: &mut BdosEnvironment, address: u16) -> u8 {
     }
 
     env.machine.poke(address + 1, size);
-    size
+    ExecutionResult::Continue
 }
 
 pub fn status(env: &mut BdosEnvironment) -> u8 {
     // The Console Status function checks to see if a character has been typed
     // at the console. If a character is ready, the value 0FFH is returned in
     // register A. Otherwise a 00H value is returned. 
-    env.bios.status()
+    env.bios.status(env.console)
 }
 
 pub fn raw_io(env: &mut BdosEnvironment, data: u8) -> u8 {
@@ -106,13 +120,13 @@ pub fn raw_io(env: &mut BdosEnvironment, data: u8) -> u8 {
     // Function 6 must not be used in conjunction with other console I/O
     // functions. 
     if data == 0xff { // Input
-        if env.bios.status() == 0 {
+        if env.bios.status(env.console) == 0 {
             0 // No char ready
         }  else {
-            env.bios.read()
+            env.bios.read(env.console)
         }
     } else { // Output
-        env.bios.write(data);
+        env.bios.write(env.console, data);
         0 // Should this be 0 or data?
     }
 }
